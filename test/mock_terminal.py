@@ -128,10 +128,6 @@ class Handler(BaseHTTPRequestHandler):
                 params[k] = v
         return params
 
-    def _authed(self):
-        token = self.headers.get("accesstoken", "")
-        return token in TOKENS
-
     def do_GET(self):
         path = self.path.partition("?")[0]
         p = self._params()
@@ -158,16 +154,11 @@ class Handler(BaseHTTPRequestHandler):
                                  "expirationDate": now_str()}, "statusCode": 0})
 
         elif path == "/v2/deviceinfo":
-            if not self._authed():
-                self._send({"errorText": "Ошибка авторизации / сессия истекла", "statusCode": 999}, status=401)
-                return
+            # Защита интеграции выключена — запросы идут без токена
             self._send({"data": {"posNum": "POS-001", "serialNum": "SN123456",
                                  "terminalId": terminal_id()}, "statusCode": 0})
 
         elif path == "/v2/payment":
-            if not self._authed():
-                self._send({"errorText": "Ошибка авторизации / сессия истекла", "statusCode": 999}, status=401)
-                return
             if not p.get("amount"):
                 self._send({"errorText": "Missing param: amount", "statusCode": 999}, status=400)
                 return
@@ -175,9 +166,6 @@ class Handler(BaseHTTPRequestHandler):
             self._send({"data": {"processId": pid, "status": "wait"}, "statusCode": 0})
 
         elif path == "/v2/refund":
-            if not self._authed():
-                self._send({"errorText": "Ошибка авторизации / сессия истекла", "statusCode": 999}, status=401)
-                return
             pid = kaspi_process({"amount": p.get("amount", "0"), "is_refund": True})
             self._send({"data": {"processId": pid, "status": "wait"}, "statusCode": 0})
 

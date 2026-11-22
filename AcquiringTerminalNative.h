@@ -30,7 +30,6 @@ struct TerminalConfig
     std::string terminalType = "Kaspi";
 
     // Kaspi Smart POS
-    std::wstring kaspiName = L"Kassa1";       // имя кассы при регистрации
     bool kaspiOwnCheque = true;               // true - чек печатает касса
     int kaspiTimeoutSec = 240;                // таймаут ожидания операции, сек
     std::string kaspiRefundMethod = "card";   // способ возврата, если метод оплаты не сохранен

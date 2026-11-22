@@ -68,7 +68,7 @@ static const wchar_t* g_MethodNamesRu[] = {
 
 static const wchar_t g_kClassNames[] = L"innNative";
 static const wchar_t* extensionName = L"InnovaIT";
-static const wchar_t* extensionVersion = L"1.0.0.0"; // Мажорная версия, минорная версия, исправления, номер сборки
+static const wchar_t* extensionVersion = L"1.0.1.0"; // Мажорная версия, минорная версия, исправления, номер сборки
 static IAddInDefBase* pAsyncEvent = NULL;
 static const bool DEBUG = false;
 
@@ -397,7 +397,6 @@ bool innNative::LoadTerminalConfig(TerminalConfig& out) const
     }
 
     // Kaspi Smart POS
-    out.kaspiName = GetSetting(L"KaspiName", L"Kassa1");
     out.kaspiOwnCheque = FlagIsTrue(wstring_to_utf8(GetSetting(L"KaspiOwnCheque", L"true")));
     try {
         out.kaspiTimeoutSec = std::stoi(GetSetting(L"KaspiTimeoutSec", L"240"));
@@ -461,124 +460,26 @@ static bool PaxRequest(const TerminalConfig& cfg, const std::string& task, const
 }
 
 ///////////////////////////////////////////////////////////////////////////////
-// Kaspi Smart POS v2: GET /v2/*, авторизация accesstoken, асинхронный статус
+// Kaspi Smart POS v2: GET /v2/*, асинхронный статус.
+// Регистрация кассы и токены не используются: «Защита интеграции» на терминале
+// должна быть выключена (Панель администратора Smart POS).
 
-// GET к терминалу Kaspi с заголовками авторизации
+// GET к терминалу Kaspi; terminalId добавляется в заголовок, если известен
 static HttpResult KaspiGet(const TerminalConfig& cfg, const std::wstring& path,
-    const std::wstring& token, const std::wstring& terminalId, DWORD timeoutMs)
+    const std::wstring& terminalId, DWORD timeoutMs)
 {
     std::wstring headers;
-    if (!token.empty())
-        headers += L"accesstoken: " + token + L"\r\n";
     if (!terminalId.empty())
         headers += L"terminalId: " + terminalId + L"\r\n";
     return HttpJsonRequest(cfg.ip, cfg.port, L"GET", path, headers, "", timeoutMs);
-}
-
-// Предварительное объявление (определение ниже)
-static bool KaspiRefreshToken(const TerminalConfig& cfg, std::wstring& token, std::wstring& errorText);
-
-// GET с авторизацией: при 401/403 обновляет токен и повторяет запрос один раз
-static HttpResult KaspiAuthGet(const TerminalConfig& cfg, const std::wstring& path,
-    std::wstring& token, const std::wstring& terminalId, DWORD timeoutMs)
-{
-    HttpResult r = KaspiGet(cfg, path, token, terminalId, timeoutMs);
-    if (r.ok && (r.httpStatus == 401 || r.httpStatus == 403)) {
-        std::wstring errorText;
-        if (KaspiRefreshToken(cfg, token, errorText))
-            r = KaspiGet(cfg, path, token, terminalId, timeoutMs);
-    }
-    return r;
-}
-
-// Регистрация кассы на терминале (первый запуск требует подтверждения на Smart POS)
-static bool KaspiRegister(const TerminalConfig& cfg, std::wstring& token, std::wstring& errorText)
-{
-    token.clear();
-    std::string name = wstring_to_utf8(cfg.kaspiName);
-    std::wstring path = L"/v2/register?name=" + Utf8ToWstring(name);
-
-    HttpResult r = HttpJsonRequest(cfg.ip, cfg.port, L"GET", path, L"", "", 15000);
-    if (!r.ok) {
-        errorText = L"Нет связи с терминалом Kaspi при регистрации (ошибка " + std::to_wstring(r.lastError) + L")";
-        return false;
-    }
-
-    try {
-        json resp = json::parse(r.body);
-        if (resp.value("statusCode", -1) == 0 && resp.contains("data") && !resp["data"].is_null()) {
-            std::string accessToken = resp["data"].value("accessToken", "");
-            if (accessToken.empty()) {
-                errorText = L"Терминал Kaspi не вернул accessToken";
-                return false;
-            }
-            StateSetString("KaspiAccessToken", accessToken);
-            StateSetString("KaspiRefreshToken", resp["data"].value("refreshToken", ""));
-            StateSetString("KaspiTokenExpiration", resp["data"].value("expirationDate", ""));
-            token = Utf8ToWstring(accessToken);
-            return true;
-        }
-        errorText = L"Ошибка регистрации Kaspi (нажмите «Разрешить» на терминале): " +
-            Utf8ToWstring(resp.value("errorText", ""));
-        return false;
-    }
-    catch (...) {
-        errorText = L"Ошибка разбора ответа регистрации Kaspi";
-        return false;
-    }
-}
-
-// Обновление токена через refreshToken; при неудаче — полная регистрация
-static bool KaspiRefreshToken(const TerminalConfig& cfg, std::wstring& token, std::wstring& errorText)
-{
-    std::string name = wstring_to_utf8(cfg.kaspiName);
-    std::string refreshToken = StateGetString("KaspiRefreshToken", "");
-
-    if (!refreshToken.empty()) {
-        std::wstring path = L"/v2/revoke?name=" + Utf8ToWstring(name) +
-            L"&refreshToken=" + Utf8ToWstring(refreshToken);
-        HttpResult r = HttpJsonRequest(cfg.ip, cfg.port, L"GET", path, L"", "", 15000);
-        if (r.ok) {
-            try {
-                json resp = json::parse(r.body);
-                if (resp.value("statusCode", -1) == 0 && resp.contains("data") && !resp["data"].is_null()) {
-                    std::string accessToken = resp["data"].value("accessToken", "");
-                    if (!accessToken.empty()) {
-                        StateSetString("KaspiAccessToken", accessToken);
-                        StateSetString("KaspiRefreshToken", resp["data"].value("refreshToken", refreshToken));
-                        StateSetString("KaspiTokenExpiration", resp["data"].value("expirationDate", ""));
-                        token = Utf8ToWstring(accessToken);
-                        return true;
-                    }
-                }
-            }
-            catch (...) {}
-        }
-    }
-
-    return KaspiRegister(cfg, token, errorText);
-}
-
-// Сохранённый токен или регистрация
-static bool KaspiEnsureToken(const TerminalConfig& cfg, std::wstring& token, std::wstring& errorText)
-{
-    std::string saved = StateGetString("KaspiAccessToken", "");
-    if (!saved.empty()) {
-        token = Utf8ToWstring(saved);
-        return true;
-    }
-    return KaspiRegister(cfg, token, errorText);
 }
 
 // Проверка связи: deviceinfo; заодно сохраняет KaspiTerminalId (нужен для /v2/status)
 static bool KaspiPing(const TerminalConfig& cfg, std::wstring& info, std::wstring& errorText)
 {
     info.clear();
-    std::wstring token;
-    if (!KaspiEnsureToken(cfg, token, errorText))
-        return false;
 
-    HttpResult r = KaspiAuthGet(cfg, L"/v2/deviceinfo", token, L"", 15000);
+    HttpResult r = KaspiGet(cfg, L"/v2/deviceinfo", L"", 15000);
     if (!r.ok) {
         errorText = L"Нет связи с терминалом Kaspi (ошибка " + std::to_wstring(r.lastError) + L")";
         return false;
@@ -600,17 +501,20 @@ static bool KaspiPing(const TerminalConfig& cfg, std::wstring& info, std::wstrin
             if (!posNum.empty()) info += L", POS: " + Utf8ToWstring(posNum);
             return true;
         }
-        errorText = L"Ошибка авторизации Kaspi: " + Utf8ToWstring(resp.value("errorText", ""));
+        // 401 без токена — на терминале включена защита интеграции
+        errorText = L"Терминал Kaspi отклонил запрос deviceinfo: " +
+            Utf8ToWstring(resp.value("errorText", "")) +
+            L" (если на терминале включена «Защита интеграции», выключите её)";
         return false;
     }
     catch (...) {
-        errorText = L"Ошибка разбора ответа deviceinfo Kaspi";
+        errorText = L"Ошибка разбора ответа deviceinfo Kaspi (если на терминале включена «Защита интеграции», выключите её)";
         return false;
     }
 }
 
 // Опрос статуса операции до конечного результата (success/fail) с актуализацией unknown
-static bool ProcessKaspiOperation(const TerminalConfig& cfg, const std::wstring& token,
+static bool ProcessKaspiOperation(const TerminalConfig& cfg,
     const std::wstring& processId, int timeoutSec,
     std::wstring& finalStatus, std::string& dataDump, std::wstring& errorText)
 {
@@ -623,7 +527,7 @@ static bool ProcessKaspiOperation(const TerminalConfig& cfg, const std::wstring&
     dataDump.clear();
 
     for (;;) {
-        HttpResult r = KaspiGet(cfg, statusPath, token, terminalId, 10000);
+        HttpResult r = KaspiGet(cfg, statusPath, terminalId, 10000);
         bool protocolError = false;
         std::wstring protocolErrorText;
 
@@ -650,7 +554,7 @@ static bool ProcessKaspiOperation(const TerminalConfig& cfg, const std::wstring&
                         time_t now = time(NULL);
                         if (now - lastActualize >= 10) {
                             lastActualize = now;
-                            KaspiGet(cfg, L"/v2/actualize?processId=" + processId, token, L"", 15000);
+                            KaspiGet(cfg, L"/v2/actualize?processId=" + processId, L"", 15000);
                         }
                     }
                     // "wait" — продолжаем опрос
@@ -1168,17 +1072,15 @@ bool innNative::KaspiRunOperation(const TerminalConfig& cfg, const std::wstring&
         return false;
     };
 
-    std::wstring token, errorText;
-    if (!KaspiEnsureToken(cfg, token, errorText))
-        return fail(errorText);
+    std::wstring errorText;
 
-    // Проверка связи и получение terminalId (сохраняется в parameters.json)
+    // Проверка связи и получение terminalId (сохраняется в state.json)
     std::wstring info;
     if (!KaspiPing(cfg, info, errorText))
         return fail(errorText);
 
     // Старт операции
-    HttpResult r = KaspiAuthGet(cfg, startPath, token, L"", 15000);
+    HttpResult r = KaspiGet(cfg, startPath, L"", 15000);
     if (!r.ok) {
         wchar_t msg[256];
         swprintf(msg, 256, L"Нет связи с терминалом Kaspi (ошибка %lu)", r.lastError);
@@ -1203,7 +1105,7 @@ bool innNative::KaspiRunOperation(const TerminalConfig& cfg, const std::wstring&
 
     std::wstring finalStatus;
     std::string dataDump;
-    if (!ProcessKaspiOperation(cfg, token, Utf8ToWstring(processId), timeoutSec, finalStatus, dataDump, errorText))
+    if (!ProcessKaspiOperation(cfg, Utf8ToWstring(processId), timeoutSec, finalStatus, dataDump, errorText))
         return fail(errorText);
 
     // Успех: чек и реквизиты транзакции для последующего возврата
@@ -1666,9 +1568,6 @@ bool innNative::mGetParameters(tVariant* retVal, tVariant* xml)
 
         L"</Group>"
         L"<Group Caption=\"Параметры Kaspi Smart POS\">"
-
-        // Имя кассы при регистрации на терминале
-        L"<Parameter Name=\"KaspiName\" Caption=\"Имя кассы (register)\" TypeValue=\"String\" DefaultValue=\"Kassa1\"/>"
 
         // true — чек печатает касса, false — чек печатает терминал
         L"<Parameter Name=\"KaspiOwnCheque\" Caption=\"Чек печатает касса\" TypeValue=\"Bool\" DefaultValue=\"true\"/>"

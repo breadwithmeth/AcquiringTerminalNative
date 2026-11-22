@@ -356,7 +356,7 @@ int main()
             tVariant par; memset(&par, 0, sizeof(par));
             setStringIn(&par, L"");
             bool ok = callMethod(comp, L"Open", &par, 1, &retVal);
-            report("Kaspi Open (register+deviceinfo)", ok && TV_BOOL(&retVal));
+            report("Kaspi Open (deviceinfo)", ok && TV_BOOL(&retVal));
             freeVariant(&par);
         }
 
@@ -384,8 +384,8 @@ int main()
             std::stringstream ss; ss << in.rdbuf();
             std::string cfg = ss.str();
             bool ok = cfg.find("LastKaspiRRN") != std::string::npos
-                && cfg.find("KaspiAccessToken") != std::string::npos;
-            report("Kaspi state saved (LastKaspiRRN, KaspiAccessToken)", ok);
+                && cfg.find("KaspiTerminalId") != std::string::npos;
+            report("Kaspi state saved (LastKaspiRRN, KaspiTerminalId)", ok);
         }
 
         // CancelPaymentByPaymentCard: refund по сохранённым реквизитам
