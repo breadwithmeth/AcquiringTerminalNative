@@ -218,6 +218,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send({"data": {
                 "amount": amount + " тг.",
                 "cardNo": "47617310******27",
+                "authorizationCode": "AUTH123",
                 "channel": 5,
                 "dateTime": time.strftime("%d.%m.%y.%H:%M:%S"),
                 "issuerName": "VISA",
@@ -244,6 +245,7 @@ class Handler(BaseHTTPRequestHandler):
             self._send({"data": {
                 "amount": amount + " тг.",
                 "cardNo": "47617310******27",
+                "authorizationCode": "AUTH456",
                 "channel": 5,
                 "dateTime": time.strftime("%d.%m.%y.%H:%M:%S"),
                 "issuerName": "VISA",

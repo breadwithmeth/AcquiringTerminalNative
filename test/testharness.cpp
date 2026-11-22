@@ -298,8 +298,18 @@ int main()
             std::wstring slip = readSlip(&pars[6]);
             bool slipOk = slip.find(L"517111027327") != std::wstring::npos
                 && slip.find(L"ОПЛАТА") != std::wstring::npos;
+            // Драйвер должен вернуть 1С реквизиты: RRN (нужен при отмене), карту, код авторизации
+            std::wstring rrnOut = readSlip(&pars[4]);
+            std::wstring cardOut = readSlip(&pars[1]);
+            std::wstring authOut = readSlip(&pars[5]);
+            bool rrnOk = rrnOut.find(L"517111027327") != std::wstring::npos;
+            bool cardOk = cardOut.find(L"47617310") != std::wstring::npos;
+            bool authOk = authOut.find(L"AUTH123") != std::wstring::npos;
             std::wstring det = L"slip='" + slip.substr(0, 60) + L"...'";
-            report("BCC PayByPaymentCard", ok && TV_VT(&retVal) == VTYPE_BOOL && TV_BOOL(&retVal) && slipOk, det);
+            if (!rrnOk || !cardOk || !authOk)
+                det = L"rrnOut='" + rrnOut + L"' cardOut='" + cardOut + L"' authOut='" + authOut + L"'";
+            report("BCC PayByPaymentCard (RRN/card/auth back to 1C)",
+                ok && TV_VT(&retVal) == VTYPE_BOOL && TV_BOOL(&retVal) && slipOk && rrnOk && cardOk && authOk, det);
             freeVariant(&pars[0]); freeVariant(&pars[1]); freeVariant(&pars[3]);
             freeVariant(&pars[4]); freeVariant(&pars[5]); freeVariant(&pars[6]);
         }
@@ -351,7 +361,7 @@ int main()
     // ============================ Kaspi v2 ============================
     setConfig(comp, L"Kaspi");
     {
-        // Open — при первом запуске: register -> deviceinfo
+        // Open — при первом запуске: deviceinfo (регистрация/токены не используются)
         {
             tVariant par; memset(&par, 0, sizeof(par));
             setStringIn(&par, L"");
@@ -360,7 +370,7 @@ int main()
             freeVariant(&par);
         }
 
-        // PayByPaymentCard: register/token -> payment -> опрос статуса -> success
+        // PayByPaymentCard: payment -> опрос статуса -> success
         {
             tVariant pars[7]; memset(pars, 0, sizeof(pars));
             setStringIn(&pars[0], L"Device123");
@@ -373,7 +383,12 @@ int main()
             std::wstring slip = readSlip(&pars[6]);
             bool slipOk = slip.find(L"Магазин") != std::wstring::npos
                 && slip.find(L"517111027327") != std::wstring::npos;
-            report("Kaspi PayByPaymentCard (status polling)", ok && TV_BOOL(&retVal) && slipOk);
+            std::wstring rrnOut = readSlip(&pars[4]);
+            bool rrnOk = rrnOut.find(L"517111027327") != std::wstring::npos;
+            if (!rrnOk)
+                report("Kaspi PayByPaymentCard (status polling)", false, L"rrnOut='" + rrnOut + L"'");
+            else
+                report("Kaspi PayByPaymentCard (status polling)", ok && TV_BOOL(&retVal) && slipOk);
             freeVariant(&pars[0]); freeVariant(&pars[1]); freeVariant(&pars[3]);
             freeVariant(&pars[4]); freeVariant(&pars[5]); freeVariant(&pars[6]);
         }

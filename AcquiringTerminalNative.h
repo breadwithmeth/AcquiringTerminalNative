@@ -154,7 +154,8 @@ private:
 
     // Kaspi Smart POS v2: �٧ѧ���� ���֧�ѧ�ڧ� (payment/refund), ������ ���ѧ����, ��֧�
     bool KaspiRunOperation(const TerminalConfig& cfg, const std::wstring& startPath,
-        bool isRefund, const wchar_t* source, tVariant* slip, tVariant* retVal);
+        bool isRefund, const wchar_t* source, tVariant* slip, tVariant* retVal,
+        tVariant* cardNumber, tVariant* rrnCode, tVariant* authorizationCode);
 
     // Настройки, переданные из 1С: SetParameter и XML при подключении
     std::map<std::wstring, std::wstring> m_params;

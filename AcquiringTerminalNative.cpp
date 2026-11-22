@@ -68,7 +68,7 @@ static const wchar_t* g_MethodNamesRu[] = {
 
 static const wchar_t g_kClassNames[] = L"innNative";
 static const wchar_t* extensionName = L"InnovaIT";
-static const wchar_t* extensionVersion = L"1.0.1.0"; // Мажорная версия, минорная версия, исправления, номер сборки
+static const wchar_t* extensionVersion = L"1.0.2.0"; // Мажорная версия, минорная версия, исправления, номер сборки
 static IAddInDefBase* pAsyncEvent = NULL;
 static const bool DEBUG = false;
 
@@ -1061,7 +1061,8 @@ bool innNative::Settlement(tVariant* retVal, tVariant* deviceID, tVariant* slip)
 //---------------------------------------------------------------------------//
 // Запуск операции Kaspi (payment/refund) и опрос статуса до конечного результата
 bool innNative::KaspiRunOperation(const TerminalConfig& cfg, const std::wstring& startPath,
-    bool isRefund, const wchar_t* source, tVariant* slip, tVariant* retVal)
+    bool isRefund, const wchar_t* source, tVariant* slip, tVariant* retVal,
+    tVariant* cardNumber, tVariant* rrnCode, tVariant* authorizationCode)
 {
     auto fail = [&](const std::wstring& errorText) {
         addError(1, source, errorText.c_str(), -1);
@@ -1114,10 +1115,11 @@ bool innNative::KaspiRunOperation(const TerminalConfig& cfg, const std::wstring&
         if (slip)
             setWStringToTVariant(slip, BuildKaspiSlipText(data, isRefund).c_str());
 
+        json cheque = json::object();
+        if (data.contains("chequeInfo") && data["chequeInfo"].is_object())
+            cheque = data["chequeInfo"];
+
         if (!isRefund) {
-            json cheque = json::object();
-            if (data.contains("chequeInfo") && data["chequeInfo"].is_object())
-                cheque = data["chequeInfo"];
             std::string method = cheque.value("method", "");
             if (method.empty())
                 method = cheque.value("rrn", "").empty() ? "qr" : "card";
@@ -1126,6 +1128,20 @@ bool innNative::KaspiRunOperation(const TerminalConfig& cfg, const std::wstring&
             StateSetString("LastKaspiRRN", cheque.value("rrn", ""));
             StateSetString("LastKaspiTransactionId", data.value("transactionId", ""));
         }
+
+        // Реквизиты транзакции в 1С (cardNumber/rrnCode/authorizationCode —
+        // in-out параметры БПО; 1С сохраняет их и передаёт при отмене)
+        std::string cardNo = cheque.value("cardMask", "");
+        std::string rrn = cheque.value("rrn", "");
+        std::string authCode = cheque.value("authorizationCode", "");
+        if (rrn.empty())
+            rrn = cheque.value("orderNumber", ""); // для QR идентификатором служит orderNumber
+        if (cardNumber && !cardNo.empty())
+            setWStringToTVariant(cardNumber, Utf8ToWstring(cardNo).c_str());
+        if (rrnCode && !rrn.empty())
+            setWStringToTVariant(rrnCode, Utf8ToWstring(rrn).c_str());
+        if (authorizationCode && !authCode.empty())
+            setWStringToTVariant(authorizationCode, Utf8ToWstring(authCode).c_str());
     }
     catch (...) {}
 
@@ -1175,7 +1191,7 @@ bool innNative::PayByPaymentCard(tVariant* retVal, tVariant* deviceID, tVariant*
             std::wstring startPath = std::wstring(L"/v2/payment?amount=") + amountStr + L"&owncheque=" + ownCheque;
 
             // Старт оплаты, опрос статуса, чек и сохранение реквизитов транзакции
-            return KaspiRunOperation(cfg, startPath, false, L"PayByPaymentCard", slip, retVal);
+            return KaspiRunOperation(cfg, startPath, false, L"PayByPaymentCard", slip, retVal, cardNumber, rrnCode, authorizationCode);
         }
 
         // === PAX: BCC, Halyk ===
@@ -1202,6 +1218,18 @@ bool innNative::PayByPaymentCard(tVariant* retVal, tVariant* deviceID, tVariant*
             std::string receipt = dataOut.value("receiptInfo", "");
             if (!receipt.empty())
                 setWStringToTVariant(slip, FixTengeSymbol(Utf8ToWstring(receipt)).c_str());
+
+            // Реквизиты транзакции в 1С (cardNumber/rrnCode/authorizationCode —
+            // in-out параметры БПО; RRN 1С передаёт обратно при отмене)
+            std::string cardNo = dataOut.value("cardNo", "");
+            std::string tagRRN = dataOut.value("tagRRN", "");
+            std::string authCode = dataOut.value("authorizationCode", "");
+            if (cardNumber && !cardNo.empty())
+                setWStringToTVariant(cardNumber, Utf8ToWstring(cardNo).c_str());
+            if (rrnCode && !tagRRN.empty())
+                setWStringToTVariant(rrnCode, Utf8ToWstring(tagRRN).c_str());
+            if (authorizationCode && !authCode.empty())
+                setWStringToTVariant(authorizationCode, Utf8ToWstring(authCode).c_str());
 
             if (retVal) {
                 TV_VT(retVal) = VTYPE_BOOL;
@@ -1280,6 +1308,8 @@ bool innNative::CancelPaymentByPaymentCard(tVariant* retVal, tVariant* deviceID,
             }
             else {
                 transactionId = StateGetString("LastKaspiOrderNumber", "");
+                if (transactionId.empty())
+                    transactionId = rrnCodeStr; // 1С вернула orderNumber, сохранённый при оплате QR
             }
 
             if (transactionId.empty()) {
@@ -1300,7 +1330,7 @@ bool innNative::CancelPaymentByPaymentCard(tVariant* retVal, tVariant* deviceID,
                 L"&transactionId=" + Utf8ToWstring(transactionId) +
                 L"&owncheque=" + ownCheque;
 
-            return KaspiRunOperation(cfg, startPath, true, L"CancelPaymentByPaymentCard", slip, retVal);
+            return KaspiRunOperation(cfg, startPath, true, L"CancelPaymentByPaymentCard", slip, retVal, cardNumber, rrnCode, authorizationCode);
         }
 
         // === PAX: BCC, Halyk ===
@@ -1341,6 +1371,17 @@ bool innNative::CancelPaymentByPaymentCard(tVariant* retVal, tVariant* deviceID,
             std::string receipt = dataOut.value("receiptInfo", "");
             if (!receipt.empty())
                 setWStringToTVariant(slip, FixTengeSymbol(Utf8ToWstring(receipt)).c_str());
+
+            // Реквизиты операции возврата в 1С
+            std::string cardNo = dataOut.value("cardNo", "");
+            std::string refundRRN = dataOut.value("tagRRN", "");
+            std::string authCode = dataOut.value("authorizationCode", "");
+            if (cardNumber && !cardNo.empty())
+                setWStringToTVariant(cardNumber, Utf8ToWstring(cardNo).c_str());
+            if (rrnCode && !refundRRN.empty())
+                setWStringToTVariant(rrnCode, Utf8ToWstring(refundRRN).c_str());
+            if (authorizationCode && !authCode.empty())
+                setWStringToTVariant(authorizationCode, Utf8ToWstring(authCode).c_str());
 
             if (retVal) {
                 TV_VT(retVal) = VTYPE_BOOL;
