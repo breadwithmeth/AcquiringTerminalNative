@@ -1,0 +1,40 @@
+name: Build
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build (x64 + x86, Release)
+        shell: cmd
+        run: build.cmd v143
+
+      - name: Assemble zip (MANIFEST.xml + INFO.XML + DLL)
+        shell: cmd
+        run: assemble.cmd
+
+      - name: Show zip contents
+        shell: cmd
+        run: powershell -NoProfile -Command "Add-Type -AssemblyName System.IO.Compression.FileSystem; [IO.Compression.ZipFile]::OpenRead('AcquiringTerminalNative.zip').Entries | Select-Object FullName, Length | Format-Table -AutoSize"
+
+      - name: Upload zip artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: AcquiringTerminalNative
+          path: AcquiringTerminalNative.zip
+
+      - name: Attach zip to release
+        if: startsWith(github.ref, 'refs/tags/v')
+        uses: softprops/action-gh-release@v2
+        with:
+          files: AcquiringTerminalNative.zip
